@@ -259,6 +259,22 @@ gmbplot <- plot(predictMatGBM$table, col = predictMatGBM$byClass, main = paste("
 
 ![](predictive_writeup_files/figure-html/unnamed-chunk-7-2.png)<!-- -->
 
+```r
+rfplot
+```
+
+```
+## NULL
+```
+
+```r
+gmbplot
+```
+
+```
+## NULL
+```
+
 
 The random forest models performs slightly better than the generalized boosted model and so we will the rf model for our main test dataset. 
 
