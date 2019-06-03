@@ -1,0 +1,131 @@
+---
+title: "Prediction Assignment Writeup"
+author: "Saifeel Momin"
+date: "5/29/2019"
+output: 
+  html_document:
+    keep_md: true 
+        
+---
+
+# 1. Introduction 
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+The training and testing data sets can be found here: 
+
+**Training:** https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+**Testing:** https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+# 2. Data Analysis and Exploratory Analysis 
+
+We begin by loading in the data sets, packages, and setting the seed to ensure reproducibility 
+```{r, message=FALSE, warning=FALSE}
+
+library(caret)
+library(ggplot2)
+library(data.table)
+library(parallel)
+library(doParallel)
+library(rattle)
+library(rpart.plot)
+set.seed(41444)
+
+main <- read.csv("pml-training.csv")
+TEST <- read.csv("pml-testing.csv")
+
+dim(main)
+dim(TEST)
+head(colnames(main))
+tail(colnames(main))
+
+```
+Now using the caret package we will parition the training data set into a training and testing. We'll use a ratio of .65(training) to .35(testing). The goal of our predictive model is to be able to predict the 'classe' variable as accuaretly based on the provided data. The classe variable determines the correctness of a specific kind of excercise performed. Class A is assigned for exercises performed correctly and the rest of the classes B - E are assigned when the excercise is not performed correctly. 
+
+```{r}
+##creating test and train sets 
+inTrain <- createDataPartition(y = main$X, p = .65, list = FALSE)
+training <- main[inTrain, ]
+test <- main[-inTrain,]
+dim(training)
+dim(test)
+```
+The training and testing sets have 160 variables that we can use in our models. However, we will test the variables and will select only those which provide us with some predicitvie strength for our models. We'll begin by testing for near zero variance. 
+
+```{r}
+n <- nearZeroVar(training)
+training2 <- training[,-n]
+test2 <- test[,-n]
+n
+```
+The output from calling nearZeroVar is saved into 'n' and the variables with near zero variance are removed from the train and test sets as they provide no benefits for our models. Additionally, reducing the overall number of variables will enable our train() call to run more efficiently and accuaretly. 
+
+Next, we will remove all columns with a high proportion of NA values in addition to removing classifier variables. The first 5 columns are all classifier variables and could potentially mislead our models. (1 - X, 2 - user_name, 3- raw_timestamp_part_1, 4- raw_timestamp_part2, 5 - cvtd_timestamp)
+
+```{r}
+##removing vars with high NA value percentage and classifiers vars
+NAs <- sapply(training2, function(x) mean(is.na(x))) > 0.95
+training3 <- training2[, NAs==FALSE]
+test3 <- test2[, NAs==FALSE]
+
+##removing classifier vars 
+train0 <- training3[,-(1:5)]
+test0 <- test3[,-(1:5)]
+x <- train0[,-54]
+y <- train0[,54]
+dim(train0)
+dim(test0)
+```
+The train and test sets now have a significantly reduced number of variables and areready to be utilized in the building of our predictive model. The overall goal of our model is to predict the 'classe' variable which correlates to the correctness of exercise. 
+
+# 3. Prediction Model Building
+
+Before we start building our model we will intitialize clusters and parallel processing to speed up the processing of our train() calls. Following this,  we'll set the trainControl parameters and create our model fit. We will use a random forest model and a generalized boosted model. Once both models are created we will determine which has the greatest accuracy and lowest out-of-bag (OOB) error rate. The best model will then be applied to the TEST data set. 
+
+### a. Random forests model 
+```{r, cache = TRUE}
+##clusters for faster processing 
+cluster <- makeCluster(detectCores()-1)
+registerDoParallel(cluster)
+set.seed(41444)
+# rf model fit 
+fitControl <- trainControl(method = "cv", number = 4, verboseIter = FALSE, allowParallel = TRUE)
+modFit <- train(x,y, data = train0, method = "rf", trControl = fitControl)
+stopCluster(cluster)
+registerDoSEQ()
+#prediction on test dataset 
+modPredict <- predict(modFit, newdata= test0)
+predictMat <- confusionMatrix(modPredict, test0$classe)
+predictMat
+```
+The Random forests model seems to perform well as the accuracy of predictions is 99.62%.
+
+
+### b. Generalized boosted model 
+
+```{r, message=FALSE, cache = TRUE}
+#gbm model fit
+fitControl1 <- trainControl(method = "repeatedcv", number = 5, repeats=1, verboseIter = FALSE)
+modFit1 <- train(classe~., data = train0, method = "gbm", trControl = fitControl1, verbose = FALSE )
+#prediction on test dataset
+modPredcitGBM <- predict(modFit1, newdata = test0)
+predictMatGBM <- confusionMatrix(modPredcitGBM, test0$classe)
+predictMatGBM
+```
+
+The Generalized boosted model performs well with an accuracy of 98.78% for its predictions. We'll compare the accuracy of both prediction models and determine which one should be applied to the main test dataset. 
+
+```{r}
+rfplot <- plot(predictMat$table, col = predictMat$byClass, main = paste("Random Forest - Accuracy =", round(predictMat$overall['Accuracy'], 4)))
+gmbplot <- plot(predictMatGBM$table, col = predictMatGBM$byClass, main = paste("Generalized Boosted Model - Accuracy =", round(predictMatGBM$overall['Accuracy'], 4)))
+```
+
+
+The random forest models performs slightly better than the generalized boosted model and so we will the rf model for our main test dataset. 
+
+# 4. Applying model to Test Data 
+```{r}
+testPredict <- predict(modFit, newdata = TEST)
+testPredict
+```
